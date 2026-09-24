@@ -1,80 +1,799 @@
-:root {
-  --bg: #000000;
-  --surface: #121214;
-  --surface-2: #1c1c1f;
-  --border: #2a2a2e;
-  --text: #f2f2f5;
-  --muted: #9a9aa2;
-  --accent: #00d4ff;
-  --accent-2: #4dd0e1;
-  --ok: #4caf7d;
-  --err: #ff5c5c;
+/* =========================================================
+   TIDAL DOWNLOADER — Design tokens
+   Dark = default (:root). Light = [data-theme="light"] di <html>.
+   Semua warna komponen hanya mengacu ke variabel di bawah ini
+   supaya pergantian tema tidak perlu menulis ulang style apapun.
+   ========================================================= */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-primary: radial-gradient(circle at 50% -20%, #0d0d0d 0%, #000000 70%);
+  --bg-secondary: #0f0f0f;
+  --bg-card: #141414;
+  --border-color: rgba(255, 255, 255, 0.08);
+  --text-primary: #ffffff;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --accent: #22d9ee;
+  --accent-hover: #5ce4f4;
+  --shadow-color: rgba(0, 0, 0, 0.55);
+
+  /* turunan dari token di atas (dipakai komponen, bukan kontrak minimum) */
+  --bg-hero: radial-gradient(
+      circle at 50% 0%,
+      rgba(34, 217, 238, 0.1) 0%,
+      transparent 55%
+    ),
+    radial-gradient(circle at 50% -20%, #0d0d0d 0%, #000000 70%);
+  --accent-text: #22d9ee; /* accent untuk teks / ikon */
+  --accent-soft: rgba(34, 217, 238, 0.14);
+  --accent-border: rgba(34, 217, 238, 0.4);
+  --on-accent: #04222a; /* teks di atas tombol accent */
+  --ok: #4ade80;
+  --err: #f87171;
+  --badge-bg: rgba(12, 12, 12, 0.72);
+  --badge-border: rgba(255, 255, 255, 0.14);
+  --badge-song: #22d9ee;
+  --badge-album: #c4b5fd;
+  --badge-artist: #6ee7b7;
+  --skeleton-base: #1c1c1c;
+  --skeleton-shine: rgba(255, 255, 255, 0.07);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-primary: #f5f5f7;
+  --bg-secondary: #ececf1;
+  --bg-card: #ffffff;
+  --border-color: rgba(0, 0, 0, 0.08);
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-muted: #a1a1aa;
+  --accent: #22d9ee;
+  --accent-hover: #0fb8cd;
+  --shadow-color: rgba(0, 0, 0, 0.06);
+
+  --bg-hero: radial-gradient(
+      circle at 50% 0%,
+      rgba(34, 217, 238, 0.18) 0%,
+      transparent 55%
+    ),
+    linear-gradient(180deg, #ffffff 0%, #f5f5f7 65%);
+  --accent-text: #0b7c8c; /* versi accent yang kontras di background terang */
+  --accent-soft: rgba(15, 184, 205, 0.14);
+  --accent-border: rgba(15, 184, 205, 0.45);
+  --on-accent: #062e36;
+  --ok: #15803d;
+  --err: #dc2626;
+  --badge-bg: rgba(255, 255, 255, 0.86);
+  --badge-border: rgba(0, 0, 0, 0.08);
+  --badge-song: #0b7c8c;
+  --badge-album: #6d28d9;
+  --badge-artist: #047857;
+  --skeleton-base: #e9e9ee;
+  --skeleton-shine: rgba(255, 255, 255, 0.85);
 }
 
 * {
   box-sizing: border-box;
 }
 
+/* Transisi warna global → switch tema terasa smooth, bukan snap. */
+*,
+*::before,
+*::after {
+  transition: background-color 0.2s ease, color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+html {
+  height: 100%;
+  background: var(--bg-primary);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
 body {
+  min-height: 100%;
   margin: 0;
-  font-family: "Segoe UI", system-ui, sans-serif;
-  background: var(--bg);
-  color: var(--text);
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 #root {
   min-height: 100vh;
 }
 
-/* ---------- login ---------- */
+h1,
+h2,
+h3 {
+  letter-spacing: -0.01em;
+}
+
+button,
+input,
+select {
+  font-family: inherit;
+}
+
+/* =========================================================
+   Layout utama
+   ========================================================= */
+.container {
+  max-width: 1080px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 20px 24px 32px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* =========================================================
+   Toolbar — semua elemen 40px & radius 8px
+   ========================================================= */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar .spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.toolbar .btn,
+.toolbar .icon-btn,
+.toolbar .toolbar-select {
+  height: 40px;
+}
+
+/* =========================================================
+   Tombol
+   ========================================================= */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  max-width: 260px;
+  padding: 0 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease,
+    border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.btn.primary:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+  color: var(--on-accent);
+}
+
+.btn.small {
+  height: 30px;
+  gap: 6px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+/* =========================================================
+   Toggle tema (Sun / Moon) — cross-fade sesuai [data-theme]
+   ========================================================= */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.icon-btn:hover {
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* toggle tema tidak boleh menyusut di toolbar */
+.theme-toggle {
+  flex-shrink: 0;
+}
+
+.icon-stack {
+  position: relative;
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.icon-stack .icon {
+  position: absolute;
+  inset: 0;
+  color: currentColor;
+  transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.2s ease;
+}
+
+[data-theme="dark"] .icon-stack .icon-sun {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+}
+
+[data-theme="dark"] .icon-stack .icon-moon {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.5);
+}
+
+[data-theme="light"] .icon-stack .icon-sun {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.5);
+}
+
+[data-theme="light"] .icon-stack .icon-moon {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+}
+
+/* =========================================================
+   Dropdown kualitas
+   ========================================================= */
+.toolbar-select {
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.toolbar-select:hover {
+  border-color: var(--accent-border);
+}
+
+.toolbar-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.toolbar-select option {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+/* =========================================================
+   Search bar — input + tombol menyatu jadi satu pill
+   ========================================================= */
+.searchbar {
+  margin: 24px 0 18px;
+}
+
+.search-pill {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-card);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.search-pill:hover {
+  border-color: var(--accent-border);
+}
+
+.search-pill:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-icon {
+  align-self: center;
+  flex-shrink: 0;
+  margin-left: 18px;
+  color: var(--text-muted);
+}
+
+.search-pill input {
+  flex: 1;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.search-pill input::placeholder {
+  color: var(--text-muted);
+}
+
+/* tanpa gap & tanpa border pemisah → menyatu dengan input */
+.search-submit {
+  flex-shrink: 0;
+  padding: 0 26px;
+  border: 0;
+  border-radius: 0 999px 999px 0;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.search-submit:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.search-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.search-submit:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -3px;
+}
+
+/* =========================================================
+   Pesan error
+   ========================================================= */
+.error {
+  margin: 0 0 14px;
+  color: var(--err);
+  font-size: 13px;
+}
+
+/* =========================================================
+   Hasil pencarian — grid card
+   ========================================================= */
+.results {
+  display: flex;
+  flex-direction: column;
+}
+
+.results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+  transition: transform 0.2s ease, box-shadow 0.2s ease,
+    background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-border);
+  box-shadow: 0 10px 26px var(--shadow-color);
+}
+
+.card.done {
+  opacity: 0.72;
+}
+
+/* badge jenis konten di pojok atas-kiri card */
+.badge {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 2;
+  padding: 3px 8px;
+  border: 1px solid var(--badge-border);
+  border-radius: 999px;
+  background: var(--badge-bg);
+  backdrop-filter: blur(6px);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.badge.song {
+  color: var(--badge-song);
+}
+
+.badge.album {
+  color: var(--badge-album);
+}
+
+.badge.artist {
+  color: var(--badge-artist);
+}
+
+.cover-wrap {
+  position: relative;
+}
+
+.cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--bg-secondary);
+}
+
+.cover-fallback {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-color);
+  background: linear-gradient(135deg, var(--bg-secondary), var(--bg-card));
+  color: var(--text-muted);
+}
+
+/* tombol download (lagu) — muncul saat card di-hover / di-focus */
+.card-download {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 6px 16px var(--shadow-color);
+  opacity: 0;
+  transform: translateY(6px);
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.2s ease,
+    background-color 0.2s ease, color 0.2s ease;
+}
+
+.card:hover .card-download,
+.card:focus-within .card-download,
+.card-download:focus-visible,
+.card-download.done {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.card-download:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.card-download:disabled {
+  cursor: default;
+}
+
+.card-download:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.card-title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-sub {
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.card-note .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-note.ok {
+  color: var(--ok);
+}
+
+.card-note.error {
+  color: var(--err);
+}
+
+.open-btn {
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* =========================================================
+   Progress download
+   ========================================================= */
+.bar {
+  height: 4px;
+  margin: 4px 0 2px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.bar > div {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  transition: width 0.2s ease;
+}
+
+/* =========================================================
+   Loading skeleton (shimmer + pulse)
+   ========================================================= */
+.card.skeleton {
+  pointer-events: none;
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.sk {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--skeleton-base);
+}
+
+.sk::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--skeleton-shine) 50%,
+    transparent 100%
+  );
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.sk-cover {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+}
+
+.sk-line {
+  height: 12px;
+}
+
+.sk-line.short {
+  width: 60%;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* =========================================================
+   Empty state — center di sisa ruang
+   ========================================================= */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px 16px 72px;
+  text-align: center;
+}
+
+.empty-state .empty-icon {
+  color: var(--text-muted);
+  opacity: 0.3;
+}
+
+.empty-state p {
+  margin: 0;
+  max-width: 32ch;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* =========================================================
+   Login screen
+   ========================================================= */
 .login-screen {
+  position: relative;
   min-height: 100vh;
   display: grid;
   place-items: center;
-  background: radial-gradient(circle at 30% 20%, #10222b 0%, #000 60%);
+  padding: 24px;
+  background: var(--bg-hero);
+}
+
+.login-theme-toggle {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 2;
 }
 
 .login-card {
-  text-align: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  width: min(420px, 92vw);
+  padding: 44px 36px;
+  border: 1px solid var(--border-color);
   border-radius: 16px;
-  padding: 48px 40px;
-  width: min(420px, 90vw);
+  background: var(--bg-card);
+  box-shadow: 0 24px 60px var(--shadow-color);
+  text-align: center;
 }
 
 .logo-mark {
+  display: grid;
+  place-items: center;
   width: 64px;
   height: 64px;
   margin: 0 auto 16px;
-  display: grid;
-  place-items: center;
-  font-size: 34px;
-  font-weight: 800;
   border-radius: 16px;
-  color: #000;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: var(--on-accent);
+  font-size: 34px;
+  font-weight: 700;
 }
 
 .logo-mark.small {
-  width: 34px;
-  height: 34px;
-  font-size: 18px;
-  border-radius: 9px;
+  width: 32px;
+  height: 32px;
   margin: 0;
+  border-radius: 8px;
+  font-size: 16px;
 }
 
 .login-card h1 {
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   font-size: 22px;
 }
 
 .login-card p {
-  color: var(--muted);
   margin: 8px 0 20px;
+  color: var(--text-secondary);
 }
 
-/* ---------- device code login ---------- */
+.login-card .btn {
+  width: 100%;
+  max-width: none;
+}
+
 .device-panel {
   display: flex;
   flex-direction: column;
@@ -87,22 +806,22 @@ body {
 }
 
 .user-code {
+  width: 100%;
+  padding: 14px 22px;
+  border: 1px dashed var(--accent-border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  color: var(--accent-text);
   font-family: "Consolas", "Courier New", monospace;
   font-size: 32px;
   font-weight: 700;
   letter-spacing: 4px;
-  color: var(--accent);
-  background: var(--surface-2);
-  border: 1px dashed var(--accent);
-  border-radius: 12px;
-  padding: 14px 22px;
-  width: 100%;
   text-align: center;
   user-select: all;
 }
 
 .muted {
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -110,7 +829,11 @@ body {
   display: flex;
   gap: 8px;
   width: 100%;
-  justify-content: center;
+}
+
+.device-actions .btn {
+  flex: 1;
+  min-width: 0;
 }
 
 .device-panel .ok {
@@ -118,222 +841,47 @@ body {
   font-size: 13px;
 }
 
-/* ---------- buttons ---------- */
-.btn {
-  background: var(--surface-2);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 14px;
-  font-size: 14px;
-  cursor: pointer;
-  white-space: nowrap;
+/* =========================================================
+   Responsive & aksesibilitas
+   ========================================================= */
+@media (max-width: 720px) {
+  .container {
+    padding: 16px 16px 28px;
+  }
+
+  .toolbar {
+    flex-wrap: wrap;
+  }
+
+  .brand h1 {
+    font-size: 14px;
+  }
 }
 
-.btn:hover:not(:disabled) {
-  border-color: var(--accent);
+@media (max-width: 480px) {
+  .search-submit {
+    padding: 0 18px;
+  }
+
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
 }
 
-.btn.primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #000;
-  font-weight: 600;
-  border: none;
+/* perangkat tanpa hover: tombol download selalu terlihat */
+@media (hover: none) {
+  .card-download {
+    opacity: 1;
+    transform: none;
+  }
 }
 
-.btn.primary:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-/* ---------- main layout ---------- */
-.container {
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 20px 24px 40px;
-}
-
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.topbar h1 {
-  font-size: 18px;
-  margin: 0;
-}
-
-.topbar .spacer {
-  flex: 1;
-}
-
-.topbar select {
-  background: var(--surface-2);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px;
-  font-size: 13px;
-}
-
-.searchbar {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 18px;
-}
-
-.searchbar input {
-  flex: 1;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--text);
-  font-size: 15px;
-  padding: 11px 14px;
-  outline: none;
-}
-
-.searchbar input:focus {
-  border-color: var(--accent);
-}
-
-/* ---------- results ---------- */
-.results-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 13px;
-  margin-bottom: 8px;
-}
-
-.track-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.track-list li {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 12px;
-}
-
-.track-list li.done {
-  opacity: 0.65;
-}
-
-.track-list img,
-.cover-fallback {
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
-  object-fit: cover;
-  flex-shrink: 0;
-}
-
-.cover-fallback {
-  background: linear-gradient(135deg, #23232a, #101014);
-}
-
-.meta {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 13px;
-}
-
-.meta strong {
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ---------- badge jenis hasil (lagu / album / artis) ---------- */
-.title-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.title-row strong {
-  min-width: 0;
-}
-
-.kind {
-  flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--muted);
-  background: var(--surface-2);
-}
-
-.kind.song {
-  color: var(--accent);
-  border-color: rgba(0, 212, 255, 0.45);
-}
-
-.kind.album {
-  color: #ffd166;
-  border-color: rgba(255, 209, 102, 0.45);
-}
-
-.kind.artist {
-  color: var(--ok);
-  border-color: rgba(76, 175, 125, 0.45);
-}
-
-.meta > span {
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.meta .ok {
-  color: var(--ok);
-  white-space: normal;
-  font-size: 12px;
-}
-
-.error {
-  color: var(--err);
-  font-size: 13px;
-}
-
-.bar {
-  height: 4px;
-  background: var(--surface-2);
-  border-radius: 2px;
-  overflow: hidden;
-  margin: 4px 0 2px;
-}
-
-.bar > div {
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  transition: width 0.2s ease;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

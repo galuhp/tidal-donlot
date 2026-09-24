@@ -1,7 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirm, open } from "@tauri-apps/plugin-dialog";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Disc3,
+  Download,
+  FolderOpen,
+  ListMusic,
+  Loader2,
+  LogOut,
+  Moon,
+  Search,
+  Sun,
+} from "lucide-react";
+import { applyTheme, readStoredTheme, systemTheme, type Theme } from "./theme";
 import "./App.css";
 
 type Track = {
@@ -46,7 +61,7 @@ type DeviceState = {
   message: string | null;
 };
 
-/** Label jenis hasil pencarian, ditampilkan sebagai badge di tiap baris. */
+/** Label jenis konten untuk badge di pojok atas-kiri tiap card hasil. */
 const KIND_LABEL: Record<string, string> = {
   song: "Lagu",
   album: "Album",
@@ -74,6 +89,37 @@ function fmtBytes(n: number) {
   return `${(n / 1024).toFixed(0)} KB`;
 }
 
+/** Banyak placeholder skeleton yang ditampilkan saat fetch sedang berjalan. */
+const SKELETON_KEYS = [0, 1, 2, 3, 4, 5];
+
+/**
+ * Tombol toggle tema. Dua icon (Sun & Moon) ditumpuk di posisi yang sama lalu
+ * di-cross-fade lewat CSS sesuai `[data-theme]` yang aktif.
+ */
+function ThemeToggle({
+  theme,
+  onToggle,
+}: {
+  theme: Theme;
+  onToggle: () => void;
+}) {
+  const target = theme === "dark" ? "tema terang" : "tema gelap";
+  return (
+    <button
+      type="button"
+      className="icon-btn theme-toggle"
+      onClick={onToggle}
+      title={`Ganti ke ${target}`}
+      aria-label={`Ganti ke ${target}`}
+    >
+      <span className="icon-stack" aria-hidden="true">
+        <Sun className="icon icon-sun" size={18} />
+        <Moon className="icon icon-moon" size={18} />
+      </span>
+    </button>
+  );
+}
+
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
@@ -96,6 +142,14 @@ export default function App() {
     message: null,
   });
   const busyRef = useRef(false);
+  const [theme, setTheme] = useState<Theme>(
+    () => readStoredTheme() ?? systemTheme(),
+  );
+
+  /** Sinkronkan tema aktif ke atribut `data-theme` di <html>. */
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
 
   useEffect(() => {
     invoke("auth_status")
@@ -209,6 +263,13 @@ export default function App() {
     }
   }
 
+  /** Toggle Light/Dark. Pilihan user disimpan supaya bertahan setelah restart. */
+  function toggleTheme() {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    applyTheme(next, true);
+  }
+
   async function copyToClipboard(text: string | null) {
     if (!text) return;
     try {
@@ -218,7 +279,7 @@ export default function App() {
     }
   }
 
-  async function doSearch(e?: React.FormEvent) {
+  async function doSearch(e?: FormEvent) {
     e?.preventDefault();
     if (!query.trim()) return;
     setSearching(true);
@@ -289,6 +350,9 @@ export default function App() {
     const waiting = device.stage === "code";
     return (
       <main className="login-screen">
+        <div className="login-theme-toggle">
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        </div>
         <div className="login-card">
           <div className="logo-mark">T</div>
           <h1>Tidal Downloader</h1>
@@ -364,111 +428,197 @@ export default function App() {
 
   return (
     <main className="container">
-      <header className="topbar">
-        <div className="logo-mark small">T</div>
-        <h1>Tidal Downloader</h1>
+      <header className="toolbar">
+        <div className="brand">
+          <div className="logo-mark small">T</div>
+          <h1>Tidal Downloader</h1>
+        </div>
         <div className="spacer" />
-        <select value={quality} onChange={(e) => setQuality(e.target.value)}>
+        <select
+          className="toolbar-select"
+          value={quality}
+          onChange={(e) => setQuality(e.target.value)}
+          title="Kualitas audio saat diunduh"
+          aria-label="Kualitas audio"
+        >
           {QUALITIES.map((q) => (
             <option key={q.value} value={q.value}>
               {q.label}
             </option>
           ))}
         </select>
-        <button className="btn" onClick={pickDir}>
-          {outDir ? `📁 ${outDir.split(/[\\/]/).pop()}` : "📁 Pilih Folder"}
+        <button
+          className="btn"
+          onClick={pickDir}
+          title={outDir ?? "Pilih folder tujuan"}
+        >
+          <FolderOpen size={16} aria-hidden="true" />
+          <span className="btn-label">
+            {outDir ? outDir.split(/[\\/]/).pop() : "Pilih Folder"}
+          </span>
         </button>
+        <ThemeToggle theme={theme} onToggle={toggleTheme} />
         <button className="btn" onClick={logout} disabled={logoutBusy}>
-          {logoutBusy ? "Keluar…" : "Logout"}
+          <LogOut size={16} aria-hidden="true" />
+          <span className="btn-label">{logoutBusy ? "Keluar…" : "Logout"}</span>
         </button>
       </header>
 
       <form className="searchbar" onSubmit={doSearch}>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Cari lagu, artis, album… atau tempel link TIDAL"
-        />
-        <button className="btn primary" type="submit" disabled={searching}>
-          {searching ? "Mencari…" : "Cari"}
-        </button>
+        <div className="search-pill">
+          <Search className="search-icon" size={18} aria-hidden="true" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Cari lagu, artis, album… atau tempel link TIDAL"
+            aria-label="Cari lagu, artis, album, atau tempel link TIDAL"
+          />
+          <button className="search-submit" type="submit" disabled={searching}>
+            {searching ? "Mencari…" : "Cari"}
+          </button>
+        </div>
       </form>
 
       {error && <p className="error">{error}</p>}
 
-      {tracks.length > 0 && (
-        <div className="results">
+      {searching ? (
+        <section className="grid" aria-busy="true" aria-label="Memuat hasil">
+          {SKELETON_KEYS.map((i) => (
+            <div className="card skeleton" key={i}>
+              <div className="sk sk-cover" />
+              <div className="sk sk-line" />
+              <div className="sk sk-line short" />
+            </div>
+          ))}
+        </section>
+      ) : tracks.length > 0 ? (
+        <section className="results">
           <div className="results-head">
             <span>{summary}</span>
-            <button className="btn" onClick={enqueueAll}>
-              ⬇ Download semua
+            <button className="btn small" onClick={enqueueAll}>
+              <Download size={15} aria-hidden="true" />
+              <span className="btn-label">Download semua</span>
             </button>
           </div>
-          <ul className="track-list">
+          <div className="grid">
             {tracks.map((t) => {
               const p = progress[t.id];
               const inQueue = queue.includes(t.id);
+              const done = p?.status === "done";
               const pct =
                 p && p.total > 0 ? Math.round((p.downloaded / p.total) * 100) : 0;
               return (
-                <li key={t.id} className={p?.status === "done" ? "done" : ""}>
-                  {t.cover_url ? (
-                    <img src={t.cover_url} alt="" />
-                  ) : (
-                    <div className="cover-fallback" />
-                  )}
-                  <div className="meta">
-                    <div className="title-row">
-                      <strong>{t.title}</strong>
-                      <span className={`kind ${t.kind}`}>
-                        {KIND_LABEL[t.kind] ?? "Lagu"}
-                      </span>
-                    </div>
-                    <span>
+                <article
+                  key={t.id}
+                  className={`card ${t.kind}${done ? " done" : ""}`}
+                >
+                  <span className={`badge ${t.kind}`}>
+                    {KIND_LABEL[t.kind] ?? "Lagu"}
+                  </span>
+                  <div className="cover-wrap">
+                    {t.cover_url ? (
+                      <img
+                        className="cover"
+                        src={t.cover_url}
+                        alt={`Cover ${t.title}`}
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="cover cover-fallback">
+                        <Disc3 size={30} aria-hidden="true" />
+                      </div>
+                    )}
+                    {isSong(t) && (
+                      <button
+                        type="button"
+                        className={done ? "card-download done" : "card-download"}
+                        disabled={inQueue || done}
+                        onClick={() => enqueue(t)}
+                        aria-label={
+                          done
+                            ? "Sudah diunduh"
+                            : inQueue
+                              ? "Sedang diunduh"
+                              : "Unduh lagu"
+                        }
+                        title={
+                          done
+                            ? "Sudah diunduh"
+                            : inQueue
+                              ? "Sedang diunduh…"
+                              : "Unduh lagu ini"
+                        }
+                      >
+                        {done ? (
+                          <CheckCircle2 size={16} aria-hidden="true" />
+                        ) : inQueue ? (
+                          <Loader2 className="spin" size={16} aria-hidden="true" />
+                        ) : (
+                          <Download size={16} aria-hidden="true" />
+                        )}
+                      </button>
+                    )}
+                  </div>
+                  <div className="card-body">
+                    <span className="card-title" title={t.title}>
+                      {t.title}
+                    </span>
+                    <span className="card-sub" title={t.artists}>
                       {t.artists}
-                      {t.album ? ` — ${t.album}` : ""}{" "}
-                      {t.duration ? `· ${fmtDuration(t.duration)}` : ""}
+                      {t.album ? ` — ${t.album}` : ""}
+                      {t.duration ? ` · ${fmtDuration(t.duration)}` : ""}
                     </span>
                     {p && p.status === "progress" && p.total > 0 && (
                       <>
                         <div className="bar">
                           <div style={{ width: `${pct}%` }} />
                         </div>
-                        <span>
+                        <span className="card-note">
                           {fmtBytes(p.downloaded)} / {fmtBytes(p.total)}
                         </span>
                       </>
                     )}
-                    {p?.status === "done" && <span className="ok">✓ {p.path}</span>}
+                    {done && (
+                      <span className="card-note ok" title={p?.path ?? undefined}>
+                        <CheckCircle2 size={12} aria-hidden="true" />
+                        <span className="path">{p?.path}</span>
+                      </span>
+                    )}
                     {p?.status === "error" && (
-                      <span className="error">{p.message}</span>
+                      <span className="card-note error">
+                        <AlertCircle size={12} aria-hidden="true" />
+                        {p.message}
+                      </span>
+                    )}
+                    {!isSong(t) && (
+                      <button
+                        className="btn small open-btn"
+                        onClick={() => openTarget(t)}
+                        title={
+                          t.kind === "album"
+                            ? "Lihat lagu di album ini"
+                            : "Lihat lagu artis ini"
+                        }
+                      >
+                        <ListMusic size={14} aria-hidden="true" />
+                        <span className="btn-label">Buka</span>
+                      </button>
                     )}
                   </div>
-                  {isSong(t) ? (
-                    <button
-                      className="btn primary"
-                      disabled={inQueue || p?.status === "done"}
-                      onClick={() => enqueue(t)}
-                    >
-                      {inQueue ? "…" : p?.status === "done" ? "✓" : "⬇"}
-                    </button>
-                  ) : (
-                    <button
-                      className="btn"
-                      onClick={() => openTarget(t)}
-                      title={
-                        t.kind === "album"
-                          ? "Lihat lagu di album ini"
-                          : "Lihat lagu artis ini"
-                      }
-                    >
-                      Buka
-                    </button>
-                  )}
-                </li>
+                </article>
               );
             })}
-          </ul>
+          </div>
+        </section>
+      ) : (
+        <div className="empty-state">
+          <Disc3
+            className="empty-icon"
+            size={96}
+            strokeWidth={1.2}
+            aria-hidden="true"
+          />
+          <p>Cari lagu, album, atau tempel link TIDAL untuk mulai</p>
         </div>
       )}
     </main>
