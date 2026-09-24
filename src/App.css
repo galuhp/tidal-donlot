@@ -266,6 +266,46 @@ body {
   white-space: nowrap;
 }
 
+/* ---------- badge jenis hasil (lagu / album / artis) ---------- */
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.title-row strong {
+  min-width: 0;
+}
+
+.kind {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.kind.song {
+  color: var(--accent);
+  border-color: rgba(0, 212, 255, 0.45);
+}
+
+.kind.album {
+  color: #ffd166;
+  border-color: rgba(255, 209, 102, 0.45);
+}
+
+.kind.artist {
+  color: var(--ok);
+  border-color: rgba(76, 175, 125, 0.45);
+}
+
 .meta > span {
   color: var(--muted);
   overflow: hidden;

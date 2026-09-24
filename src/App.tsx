@@ -12,6 +12,8 @@ type Track = {
   album_id: string | null;
   cover_url: string | null;
   duration: number | null;
+  /** "song" | "album" | "artist" — dari backend, dipakai untuk menandai hasil. */
+  kind: string;
 };
 
 type Progress = {
@@ -43,6 +45,16 @@ type DeviceState = {
   browserOpened: boolean;
   message: string | null;
 };
+
+/** Label jenis hasil pencarian, ditampilkan sebagai badge di tiap baris. */
+const KIND_LABEL: Record<string, string> = {
+  song: "Lagu",
+  album: "Album",
+  artist: "Artis",
+};
+
+/** Hanya "song" yang bisa langsung diunduh; album/artis harus dibuka dulu. */
+const isSong = (t: Track) => t.kind === "song";
 
 const QUALITIES = [
   { value: "HI_RES_LOSSLESS", label: "Hi-Res Lossless (24-bit)" },
@@ -243,10 +255,34 @@ export default function App() {
       return;
     }
     setQueue((q) => {
-      const ids = tracks.map((t) => t.id).filter((id) => !q.includes(id));
+      // hanya lagu yang bisa diunduh; album/artis harus dibuka dulu
+      const ids = tracks
+        .filter(isSong)
+        .map((t) => t.id)
+        .filter((id) => !q.includes(id));
       return [...q, ...ids];
     });
     setTimeout(runQueue, 0);
+  }
+
+  /** Buka album/artis dari hasil pencarian → tampilkan lagu-lagunya. */
+  async function openTarget(t: Track) {
+    const url =
+      t.kind === "album"
+        ? `https://tidal.com/album/${t.id}`
+        : `https://tidal.com/artist/${t.id}`;
+    setQuery(url);
+    setSearching(true);
+    setError(null);
+    try {
+      const res: Track[] = await invoke("search", { query: url });
+      setTracks(res);
+      if (res.length === 0) setError("Tidak ada lagu untuk ditampilkan.");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSearching(false);
+    }
   }
 
   if (!loggedIn) {
@@ -318,6 +354,14 @@ export default function App() {
     );
   }
 
+  const songs = tracks.filter(isSong).length;
+  const albums = tracks.filter((t) => t.kind === "album").length;
+  const artists = tracks.filter((t) => t.kind === "artist").length;
+  const summary =
+    albums + artists > 0
+      ? `${tracks.length} hasil · ${songs} lagu, ${albums} album, ${artists} artis`
+      : `${tracks.length} hasil`;
+
   return (
     <main className="container">
       <header className="topbar">
@@ -355,7 +399,7 @@ export default function App() {
       {tracks.length > 0 && (
         <div className="results">
           <div className="results-head">
-            <span>{tracks.length} hasil</span>
+            <span>{summary}</span>
             <button className="btn" onClick={enqueueAll}>
               ⬇ Download semua
             </button>
@@ -374,7 +418,12 @@ export default function App() {
                     <div className="cover-fallback" />
                   )}
                   <div className="meta">
-                    <strong>{t.title}</strong>
+                    <div className="title-row">
+                      <strong>{t.title}</strong>
+                      <span className={`kind ${t.kind}`}>
+                        {KIND_LABEL[t.kind] ?? "Lagu"}
+                      </span>
+                    </div>
                     <span>
                       {t.artists}
                       {t.album ? ` — ${t.album}` : ""}{" "}
@@ -395,13 +444,27 @@ export default function App() {
                       <span className="error">{p.message}</span>
                     )}
                   </div>
-                  <button
-                    className="btn primary"
-                    disabled={inQueue || p?.status === "done"}
-                    onClick={() => enqueue(t)}
-                  >
-                    {inQueue ? "…" : p?.status === "done" ? "✓" : "⬇"}
-                  </button>
+                  {isSong(t) ? (
+                    <button
+                      className="btn primary"
+                      disabled={inQueue || p?.status === "done"}
+                      onClick={() => enqueue(t)}
+                    >
+                      {inQueue ? "…" : p?.status === "done" ? "✓" : "⬇"}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn"
+                      onClick={() => openTarget(t)}
+                      title={
+                        t.kind === "album"
+                          ? "Lihat lagu di album ini"
+                          : "Lihat lagu artis ini"
+                      }
+                    >
+                      Buka
+                    </button>
+                  )}
                 </li>
               );
             })}
