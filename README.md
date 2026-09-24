@@ -63,7 +63,7 @@ src-tauri/
   src/
     lib.rs              # Tauri commands (login_device, copy_text, search, download_track, ...)
     auth.rs             # Device Authorization Grant (login pakai kode) + refresh + persist
-    tidal.rs            # Client API v2 (JSON:API) + resolve stream URL
+    tidal.rs            # Client API v2 (JSON:API) + paginasi + resolve stream URL
     downloader.rs       # Download audio + progress event + embed tags
   capabilities/         # Permission Tauri (dialog, event, opener)
 ```
@@ -76,3 +76,5 @@ src-tauri/
 - Kualitas Hi-Res kadang berbentuk stream DASH terenkripsi dan akan ditolak otomatis dengan pesan; coba kualitas `LOSSLESS`.
 - **Login memakai `client_id` publik klien TIDAL** (`DEVICE_CLIENT_ID`). Ini bukan aplikasi yang kamu daftarkan, jadi bisa saja dicabut/dibatasi TIDAL kapan pun. Token tetap milik akunmu sendiri; refresh memakai kredensial yang sama seperti saat login.
 - Sudah ada fallback otomatis: kalau server menolak permintaan token yang menyertakan `client_secret`, aplikasi mengulang tanpa `client_secret`.
+- **Endpoint v2 yang terbukti jalan** (diverifikasi langsung ke `openapi.tidal.com`): pencarian butuh dua langkah (`/searchResults?filter%5Bquery%5D=…` menghasilkan id, lalu `/searchResults/{id}?include=…`), isi album & playlist diambil dari `relationships/items` (bukan `relationships/tracks` — endpoint itu membalas error), dan halaman berikutnya diikuti dari `links.next`. Pola `items` ini sama dengan proyek tidal-dl (yaronzz) yang memakai `albums/{id}/items` dan `playlists/{id}/items` di API v1.
+- Scope device login harus `r_usr+w_usr+w_sub`; menambahkan `playback` ditolak (`invalid_scope`) sehingga URL audio tidak bisa diambil lewat alur ini.

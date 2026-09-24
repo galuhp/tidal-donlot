@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { confirm, open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 type Track = {
@@ -65,6 +65,7 @@ function fmtBytes(n: number) {
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [tracks, setTracks] = useState<Track[]>([]);
   const [searching, setSearching] = useState(false);
@@ -162,6 +163,37 @@ export default function App() {
       setError(String(e));
     } finally {
       setLoginBusy(false);
+    }
+  }
+
+  /** Logout: hapus sesi tersimpan supaya user bisa connect ulang / ganti akun. */
+  async function logout() {
+    const ok = await confirm(
+      "Logout dari akun TIDAL ini? Kamu perlu login ulang untuk mengunduh.",
+      { title: "Logout", kind: "warning" },
+    );
+    if (!ok) return;
+    setLogoutBusy(true);
+    setError(null);
+    try {
+      await invoke("logout");
+      setLoggedIn(false);
+      setDevice({
+        stage: null,
+        userCode: null,
+        verificationUri: null,
+        verificationUriComplete: null,
+        copied: false,
+        browserOpened: false,
+        message: null,
+      });
+      setTracks([]);
+      setProgress({});
+      setQueue([]);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLogoutBusy(false);
     }
   }
 
@@ -301,6 +333,9 @@ export default function App() {
         </select>
         <button className="btn" onClick={pickDir}>
           {outDir ? `📁 ${outDir.split(/[\\/]/).pop()}` : "📁 Pilih Folder"}
+        </button>
+        <button className="btn" onClick={logout} disabled={logoutBusy}>
+          {logoutBusy ? "Keluar…" : "Logout"}
         </button>
       </header>
 

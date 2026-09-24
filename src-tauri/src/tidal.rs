@@ -193,7 +193,7 @@ fn build_track(track: &Value, by_id: &std::collections::HashMap<&str, &Value>) -
         album,
         album_id,
         cover_url,
-                duration: parse_duration(&attrs["duration"]),
+        duration: parse_duration(&attrs["duration"]),
     }
 }
 
@@ -309,23 +309,24 @@ pub async fn resolve_query(state: &AuthState, input: &str) -> Result<Vec<TrackIn
 
 pub async fn search(state: &AuthState, query: &str) -> Result<Vec<TrackInfo>, String> {
     let token = ensure_access_token(state).await?;
-    let url = format!(
-        "{API_BASE}/searchResults/{}?countryCode={COUNTRY}&include=tracks,tracks.artists,tracks.albums",
+    // Langkah 1: `/searchResults` hanya menerima `filter[query]`; menaruh kata kunci
+    // sebagai id (`/searchResults/bohemian`) dibalas 400 INVALID_RESOURCE_ID
+    // (diverifikasi langsung ke api TIDAL).
+    let lookup = format!(
+        "{API_BASE}/searchResults?countryCode={COUNTRY}&filter%5Bquery%5D={}",
         urlencoding::encode(query)
     );
-    let resp = state
-        .client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("search gagal: {status} - {body}"));
-    }
-    let json: Value = resp.json().await.map_err(|e| e.to_string())?;
+    let found = get_json(state, &token, &lookup, "search").await?;
+    let search_id = found["data"][0]["id"]
+        .as_str()
+        .or_else(|| found["data"]["id"].as_str())
+        .ok_or("hasil pencarian kosong")?
+        .to_string();
+    // Langkah 2: tracks lengkap (artis + album + cover) dari id hasil pencarian.
+    let url = format!(
+        "{API_BASE}/searchResults/{search_id}?countryCode={COUNTRY}&include=tracks,tracks.artists,tracks.albums,tracks.albums.coverArt"
+    );
+    let json = get_json(state, &token, &url, "search").await?;
     Ok(parse_tracks(&json))
 }
 
@@ -334,29 +335,21 @@ pub async fn get_album_tracks(
     album_id: &str,
 ) -> Result<Vec<TrackInfo>, String> {
     let token = ensure_access_token(state).await?;
+    // Relationship yang benar untuk album adalah `items` (bukan `tracks`); include
+    // `items.albums.coverArt` membuat URL cover ikut terkirim (diverifikasi ke api).
     let url = format!(
-        "{API_BASE}/albums/{album_id}/relationships/tracks?countryCode={COUNTRY}&include=tracks,tracks.artists,tracks.albums"
+        "{API_BASE}/albums/{album_id}/relationships/items?countryCode={COUNTRY}&include={INCLUDE_ITEMS}"
     );
-    let resp = state
-        .client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("album tracks gagal: {status} - {body}"));
-    }
-    let json: Value = resp.json().await.map_err(|e| e.to_string())?;
+    let json = get_all_pages(state, &token, &url, "album tracks", INCLUDE_ITEMS).await?;
     Ok(parse_tracks(&json))
 }
 
 pub async fn get_track(state: &AuthState, track_id: &str) -> Result<Vec<TrackInfo>, String> {
     let token = ensure_access_token(state).await?;
+    // `albums.coverArt` wajib ada agar resource `artworks` ikut di `included`
+    // sehingga URL cover bisa dirakit cover_from_album.
     let url = format!(
-        "{API_BASE}/tracks/{track_id}?countryCode={COUNTRY}&include=albums,artists"
+        "{API_BASE}/tracks/{track_id}?countryCode={COUNTRY}&include=albums,albums.coverArt,artists"
     );
     let resp = state
         .client
@@ -383,22 +376,12 @@ pub async fn get_playlist_tracks(
     playlist_id: &str,
 ) -> Result<Vec<TrackInfo>, String> {
     let token = ensure_access_token(state).await?;
+    // Sama seperti album: pakai relationship `items`; `tracks` dibalas error.
+    // Playlist panjang dipaginasi lewat `links.next` (cursor) oleh get_all_pages.
     let url = format!(
-        "{API_BASE}/playlists/{playlist_id}/relationships/tracks?countryCode={COUNTRY}&include=tracks,tracks.artists,tracks.albums"
+        "{API_BASE}/playlists/{playlist_id}/relationships/items?countryCode={COUNTRY}&include={INCLUDE_ITEMS}"
     );
-    let resp = state
-        .client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("playlist tracks gagal: {status} - {body}"));
-    }
-    let json: Value = resp.json().await.map_err(|e| e.to_string())?;
+    let json = get_all_pages(state, &token, &url, "playlist tracks", INCLUDE_ITEMS).await?;
     Ok(parse_tracks(&json))
 }
 
@@ -578,7 +561,7 @@ mod tests {
 
     #[test]
     fn parse_tracks_handles_relationships_array() {
-        // bentuk respons /albums/{id}/relationships/tracks: data = array track resource
+        // bentuk respons /albums/{id}/relationships/items: data = array track resource
         let payload = json!({
             "data": [
                 {
@@ -637,6 +620,22 @@ mod tests {
         assert_eq!(tracks[0].id, "t-9");
         assert_eq!(tracks[0].artists, "Satu Artis");
         assert_eq!(tracks[0].album, "Album Solo");
+    }
+
+    #[test]
+    fn parse_duration_handles_iso8601_and_seconds() {
+        // API v2 mengirim durasi sebagai string ISO 8601 (probe: "PT4M16S", "PT46M25S").
+        assert_eq!(parse_duration(&json!("PT4M16S")), Some(256.0));
+        assert_eq!(parse_duration(&json!("PT46M25S")), Some(2785.0));
+        assert_eq!(parse_duration(&json!("PT5M58S")), Some(358.0));
+        assert_eq!(parse_duration(&json!("PT1H2M3S")), Some(3723.0));
+        assert_eq!(parse_duration(&json!("P1DT1H")), Some(90_000.0));
+        // bentuk lama: angka detik
+        assert_eq!(parse_duration(&json!(213.5)), Some(213.5));
+        // nilai tak dikenal → None (tanpa panic)
+        assert_eq!(parse_duration(&json!(null)), None);
+        assert_eq!(parse_duration(&json!("bukan durasi")), None);
+        assert_eq!(parse_duration(&json!(true)), None);
     }
 }
 
