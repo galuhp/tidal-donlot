@@ -6,16 +6,23 @@ use tauri::Emitter;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 // --- OAuth 2.0 Device Authorization Grant (login pakai kode di link.tidal.com) ---
-// Memakai kredensial publik klien TIDAL (dipublikasikan proyek open-source
-// seperti TidalLib) sehingga pengguna TIDAK perlu mendaftar aplikasi sendiri.
+// Memakai kredensial publik klien TIDAL (klien **TV / AndroidTV**) — kredensial
+// yang sama dipakai modul TIDAL OrpheusDL (github.com/bascurtiz/orpheusdl-tidal,
+// `interface.py` → `TidalTvSession(settings['tv_atmos_token'], settings['tv_atmos_secret'])`).
+// Klien TV inilah yang diizinkan TIDAL mengakses endpoint playback; klien
+// web/desktop publik (mis. `zU4XHVVkc2tDPo4t`) hanya dapat metadata.
 const TOKEN_URL: &str = "https://auth.tidal.com/v1/oauth2/token";
 const DEVICE_AUTH_URL: &str = "https://auth.tidal.com/v1/oauth2/device_authorization";
-const DEVICE_CLIENT_ID: &str = "zU4XHVVkc2tDPo4t";
-const DEVICE_CLIENT_SECRET: &str = "VJKhDFqJPqvsPVNBV6ukXTJmwlvbttP7wlMlrc72se4=";
-/// Scope yang diminta saat login device — sama seperti tidal-dl yaronzz
-/// yang terbukti berhasil; tanpa scope ini endpoint v1 (metadata & playback)
-/// membalas 403 "Token is missing required scope".
-const DEVICE_SCOPE: &str = "r_usr+w_usr+w_sub";
+const DEVICE_CLIENT_ID: &str = "4N3n6Q1x95LL5K7p";
+const DEVICE_CLIENT_SECRET: &str = "oKOXfJW371cX6xaZ0PyhgGNBdNLlBZd4AKKYougMjik=";
+/// Scope klien TV — OrpheusDL memakai `scope: 'r_usr w_usr'` (tanpa `playback`).
+/// Menambah `playback` ditolak TIDAL (`invalid_scope`); izin stream ditentukan
+/// oleh **client id** yang dikirim di header `X-Tidal-Token`, bukan scope.
+const DEVICE_SCOPE: &str = "r_usr w_usr";
+/// User-Agent klien Android TV. Wajib pada panggilan `api.tidal.com/v1` supaya
+/// TIDAL mengenali permintaan sebagai klien TV (sama seperti `auth_headers()`
+/// di OrpheusDL-TIDAL). Dipakai oleh `tidal.rs` saat resolve stream.
+pub const TIDAL_ANDROID_UA: &str = "TIDAL_ANDROID/1039 okhttp/3.14.9";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,11 +67,29 @@ pub struct AuthSession {
     pub refresh_token: String,
     pub expires_at: u64,
     pub user_id: Option<u64>,
+    /// Kode negara akun (dipakai sebagai `countryCode` saat request API).
+    #[serde(default)]
+    pub country_code: Option<String>,
     /// client_id yang menerbitkan token (dipakai saat refresh)
     #[serde(default)]
     pub client_id: String,
     #[serde(default)]
     pub client_secret: Option<String>,
+}
+
+/// Ambil `userId` + `countryCode` dari objek `user` pada respons token.
+/// TIDAL memakai kunci `userId` (bukan `id`) — sama seperti tidal-dl (yaronzz).
+fn user_fields(user: &Option<serde_json::Value>) -> (Option<u64>, Option<String>) {
+    match user {
+        Some(u) => (
+            u["userId"].as_u64().or_else(|| u["id"].as_u64()),
+            u["countryCode"]
+                .as_str()
+                .filter(|c| !c.is_empty())
+                .map(String::from),
+        ),
+        None => (None, None),
+    }
 }
 
 pub struct AuthState {
@@ -83,6 +108,18 @@ struct TokenResponse {
     user: Option<serde_json::Value>,
 }
 
+/// Lengkapi URL TIDAL dengan skema. Endpoint device TIDAL mengirim nilai tanpa
+/// `https://` (`link.tidal.com/ABCD`), sehingga `open_url` gagal dan clipboard
+/// berisi teks yang tidak bisa langsung diklik.
+fn absolute_url(url: &str) -> String {
+    let trimmed = url.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{}", trimmed.trim_start_matches('/'))
+    }
+}
+
 pub fn persist_session(dir: &Path, session: &AuthSession) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
@@ -91,7 +128,32 @@ pub fn persist_session(dir: &Path, session: &AuthSession) -> Result<(), String> 
 
 pub fn load_session_from_disk(dir: &Path) -> Option<AuthSession> {
     let json = std::fs::read_to_string(dir.join("auth.json")).ok()?;
-    serde_json::from_str(&json).ok()
+    serde_json::from_str::<AuthSession>(&json)
+        .ok()
+        .map(migrate_session_client)
+}
+
+/// Sesi lama diterbitkan klien device non-TV (versi aplikasi sebelum ini), dan
+/// token klien itu tidak bisa dipakai playback. Refresh token tetap sah lintas
+/// client id — `auth_session()` di OrpheusDL memakai trik yang sama untuk
+/// "switch to any client type from an existing session" — jadi cukup kosongkan
+/// `client_id` agar refresh berikutnya memakai klien TV (tanpa login ulang).
+pub fn migrate_session_client(mut session: AuthSession) -> AuthSession {
+    if session.client_id != DEVICE_CLIENT_ID {
+        session.client_id = String::new();
+        session.client_secret = None;
+    }
+    session
+}
+
+/// `client_id` pemilik sesi aktif, dipakai `tidal.rs` sebagai header
+/// `X-Tidal-Token` pada panggilan `api.tidal.com/v1` (endpoint playback).
+pub async fn session_client_id(state: &AuthState) -> String {
+    let guard = state.session.lock().await;
+    match guard.as_ref() {
+        Some(s) if !s.client_id.is_empty() => s.client_id.clone(),
+        _ => DEVICE_CLIENT_ID.to_string(),
+    }
 }
 
 pub async fn request_token(state: &AuthState, form: &[(&str, &str)]) -> Result<AuthSession, String> {
@@ -109,11 +171,13 @@ pub async fn request_token(state: &AuthState, form: &[(&str, &str)]) -> Result<A
     }
     let tr: TokenResponse = resp.json().await.map_err(|e| e.to_string())?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let (user_id, country_code) = user_fields(&tr.user);
     Ok(AuthSession {
         access_token: tr.access_token,
         refresh_token: tr.refresh_token.unwrap_or_default(),
         expires_at: now + tr.expires_in.max(0) as u64 - 60,
-        user_id: tr.user.and_then(|u| u["id"].as_u64()),
+        user_id,
+        country_code,
         ..Default::default()
     })
 }
@@ -136,10 +200,16 @@ pub async fn login_device(state: &AuthState, app: tauri::AppHandle) -> Result<Au
 
     // Link login (sudah memuat kode) disalin ke clipboard sebagai jalur utama,
     // karena auto-open browser bisa gagal di sebagian lingkungan Windows.
-    let link = device
+    // TIDAL membalas `verificationUri`/`verificationUriComplete` TANPA skema
+    // (mis. `link.tidal.com/ABCD`) sehingga URL-nya harus dilengkapi `https://`
+    // dulu; kalau `...Complete` tidak ada, rakit sendiri dari user code
+    // (pola OrpheusDL: `https://link.tidal.com/<userCode>`).
+    let raw_link = device
         .verification_uri_complete
         .clone()
-        .unwrap_or_else(|| device.verification_uri.clone());
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| format!("{}/{}", device.verification_uri, device.user_code));
+    let link = absolute_url(&raw_link);
     let copied = app.clipboard().write_text(link.clone()).is_ok();
 
     // Best-effort: coba buka browser default, tapi jangan bergantung padanya.
@@ -155,7 +225,7 @@ pub async fn login_device(state: &AuthState, app: tauri::AppHandle) -> Result<Au
         DeviceLoginEvent {
             stage: "code".into(),
             user_code: Some(device.user_code.clone()),
-            verification_uri: Some(device.verification_uri.clone()),
+            verification_uri: Some(absolute_url(&device.verification_uri)),
             verification_uri_complete: Some(link),
             copied: Some(copied),
             browser_opened: Some(browser_opened),
@@ -200,11 +270,13 @@ pub async fn login_device(state: &AuthState, app: tauri::AppHandle) -> Result<Au
         if resp.status().is_success() {
             let tr: TokenResponse = resp.json().await.map_err(|e| e.to_string())?;
             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let (user_id, country_code) = user_fields(&tr.user);
             let session = AuthSession {
                 access_token: tr.access_token,
                 refresh_token: tr.refresh_token.unwrap_or_default(),
                 expires_at: now + tr.expires_in.max(0) as u64 - 60,
-                user_id: tr.user.and_then(|u| u["id"].as_u64()),
+                user_id,
+                country_code,
                 client_id: DEVICE_CLIENT_ID.to_string(),
                 client_secret: Some(DEVICE_CLIENT_SECRET.to_string()),
             };
@@ -310,6 +382,9 @@ pub async fn ensure_access_token(state: &AuthState) -> Result<String, String> {
         };
         (s.refresh_token.clone(), client_id, client_secret)
     };
+    // OrpheusDL (`TidalTvSession.refresh`) mengirim refresh_token + client_id +
+    // client_secret saja — tanpa `scope`; mengirim scope pada grant refresh bisa
+    // ditolak TIDAL, jadi form-nya disamakan.
     let refreshed = request_token(
         state,
         &[
@@ -317,19 +392,87 @@ pub async fn ensure_access_token(state: &AuthState) -> Result<String, String> {
             ("refresh_token", &refresh_token),
             ("client_id", &client_id),
             ("client_secret", &client_secret),
-            ("scope", DEVICE_SCOPE),
         ],
     )
-    .await?;
+    .await
+    .map_err(|e| format!("{e} — sesi tidak bisa diperbarui; silakan Logout lalu login ulang."))?;
     let token = refreshed.access_token.clone();
-    *state.session.lock().await = Some(refreshed.clone());
-    persist_session(&state.data_dir, &refreshed)?;
+    // Gabung (bukan timpa): respons refresh boleh tidak memuat `refresh_token`,
+    // `user`, atau kredensial klien. Kalau ditimpa mentah-mentah, sesi bisa
+    // kehilangan refresh_token dan user terpaksa login ulang.
+    {
+        let mut guard = state.session.lock().await;
+        if let Some(cur) = guard.as_mut() {
+            cur.access_token = refreshed.access_token;
+            cur.expires_at = refreshed.expires_at;
+            if !refreshed.refresh_token.is_empty() {
+                cur.refresh_token = refreshed.refresh_token;
+            }
+            if refreshed.user_id.is_some() {
+                cur.user_id = refreshed.user_id;
+            }
+            if refreshed.country_code.is_some() {
+                cur.country_code = refreshed.country_code;
+            }
+        }
+        if let Some(s) = guard.as_ref() {
+            persist_session(&state.data_dir, s)?;
+        }
+    }
     Ok(token)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::TokenError;
+    use super::{absolute_url, migrate_session_client, AuthSession, TokenError, DEVICE_CLIENT_ID};
+
+    #[test]
+    fn absolute_url_adds_missing_scheme() {
+        // Bentuk asli balasan TIDAL: tanpa skema (lihat probe `device_authorization`).
+        assert_eq!(
+            absolute_url("link.tidal.com/ABCD"),
+            "https://link.tidal.com/ABCD"
+        );
+        assert_eq!(
+            absolute_url("https://link.tidal.com/ABCD"),
+            "https://link.tidal.com/ABCD"
+        );
+        // toleransi spasi & slash di depan
+        assert_eq!(
+            absolute_url(" /link.tidal.com/ABCD "),
+            "https://link.tidal.com/ABCD"
+        );
+    }
+
+    #[test]
+    fn migrates_session_from_old_non_tv_client() {
+        // Sesi lama (klien web/desktop) tidak bisa dipakai playback: client_id
+        // dikosongkan supaya refresh memakai klien TV, token tetap dibawa.
+        let old = AuthSession {
+            access_token: "a".into(),
+            refresh_token: "r".into(),
+            client_id: "zU4XHVVkc2tDPo4t".into(),
+            client_secret: Some("old-secret".into()),
+            ..Default::default()
+        };
+        let migrated = migrate_session_client(old);
+        assert!(migrated.client_id.is_empty());
+        assert!(migrated.client_secret.is_none());
+        assert_eq!(migrated.refresh_token, "r");
+    }
+
+    #[test]
+    fn keeps_tv_client_session_untouched() {
+        let tv = AuthSession {
+            client_id: DEVICE_CLIENT_ID.to_string(),
+            client_secret: Some("secret".into()),
+            refresh_token: "r".into(),
+            ..Default::default()
+        };
+        let kept = migrate_session_client(tv);
+        assert_eq!(kept.client_id, DEVICE_CLIENT_ID);
+        assert_eq!(kept.client_secret.as_deref(), Some("secret"));
+    }
 
     #[test]
     fn parses_tidal_token_error_response() {

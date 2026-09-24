@@ -7,7 +7,7 @@ Desktop app untuk mencari & mengunduh track TIDAL dengan metadata lengkap (title
 ## Fitur
 
 - 🔐 **Login pakai kode (OAuth 2.0 Device Authorization Grant)** — kode di `link.tidal.com`, **tanpa daftar aplikasi** & **tanpa `CLIENT_ID`/`CLIENT_SECRET`**
-- 📋 Link login **otomatis disalin ke clipboard** (auto-open browser tidak selalu berhasil) + tombol "Salin kode" & "Salin link login"
+- 📋 Link login **otomatis disalin ke clipboard** + tombol "Salin kode" & "Salin link login" (link dinormalkan ke `https://` karena balasan TIDAL tidak memuat skema — ini penyebab tombol buka-browser dulu sering gagal)
 - ♻️ Token auto-refresh + session tersimpan di disk
 - 🔍 **Pencarian track** via TIDAL API v2 (JSON:API)
 - ⬇️ **Download queue** dengan progress bar real-time (event Rust → UI)
@@ -31,13 +31,17 @@ Tidak ada konfigurasi yang diperlukan. Jalankan aplikasi lalu klik **"Login paka
 3. Setujui permintaan login di `link.tidal.com`; aplikasi mem-poll token tiap beberapa detik
 4. Begitu disetujui, kamu langsung masuk
 
-Cara ini memakai kredensial publik klien TIDAL (`DEVICE_CLIENT_ID` di `src-tauri/src/auth.rs`),
-sama seperti pendekatan proyek open-source
-[Tidal-Media-Downloader-PRO](https://github.com/yaronzz/Tidal-Media-Downloader-PRO).
+Cara ini memakai kredensial publik **klien TV TIDAL** (`DEVICE_CLIENT_ID` di `src-tauri/src/auth.rs`),
+sama seperti modul [OrpheusDL-TIDAL](https://github.com/bascurtiz/orpheusdl-tidal)
+(`TidalTvSession`, nilai default `tv_atmos_token`/`tv_atmos_secret`).
+Inilah klien yang diizinkan TIDAL untuk mengambil URL stream, sehingga unduhan bisa berjalan tanpa
+memakai client id web/desktop publik seperti tidal-dl (yaronzz).
 **Kamu tidak perlu akun developer, tidak perlu `CLIENT_ID`/`CLIENT_SECRET`.**
 
-Catatan: aplikasi tetap **mencoba** membuka browser default; karena itu tidak selalu berhasil di
-Windows, statusnya ditampilkan di layar dan link sudah ada di clipboard — jadi selalu ada cara lanjut.
+Catatan: link dari TIDAL tidak memuat skema (`link.tidal.com/ABCD`); aplikasi menambah `https://`
+(`absolute_url` di `auth.rs`) sehingga **buka browser otomatis** berfungsi dan link di clipboard bisa
+langsung ditempel (Ctrl+V). Kalau browser tetap tidak terbuka, statusnya ditampilkan di layar dan link
+sudah ada di clipboard — jadi selalu ada cara lanjut.
 
 ### Menjalankan
 
@@ -70,11 +74,14 @@ src-tauri/
 
 ## Catatan penting
 
-- **API v2** (`openapi.tidal.com/v2`) hanya menyediakan **metadata & cover art**. URL audio diambil via endpoint playback internal yang memerlukan **token user premium** — jika akun tidak memenuhi syarat, request playback akan ditolak dengan pesan error yang jelas.
-- Jika TIDAL menyetujui scope terbatas untuk aplikasimu, fitur download mungkin tidak tersedia — fitur search/cover/playlist tetap berfungsi.
+- **API v2** (`openapi.tidal.com/v2`) dipakai untuk **metadata, pencarian & cover art**. URL audio diambil dari **API v1** (`api.tidal.com/v1`) dengan klien TV — bukan dari v2.
+- **Endpoint playback sudah diaktifkan** (Sept 2026): aplikasi memakai **klien TV TIDAL** (`DEVICE_CLIENT_ID` = klien AndroidTV publik yang dipakai modul [OrpheusDL-TIDAL](https://github.com/bascurtiz/orpheusdl-tidal)) dan mengambil URL audio dari API v1 `tracks/{id}/playbackinfopostpaywall/**v4**` dengan header `X-Tidal-Token: <client_id>` + `User-Agent: TIDAL_ANDROID/1039 okhttp/3.14.9`. Yang menentukan izin stream adalah **client id** ini, bukan scope: scope device login tetap `r_usr w_usr` (menambah `playback` ditolak `invalid_scope`).
+- Kalau stream tetap ditolak (`4005` / `PREREQUISITE_MISSING`): pastikan akun berlangganan HiFi/Plus, lalu **login ulang** (sesi lama dari klien device non-TV otomatis dimigrasi: `client_id` dikosongkan supaya refresh berikutnya memakai klien TV, lihat `migrate_session_client` di `auth.rs`), dan cek region track.
+- Fitur **search / album / playlist / cover / badge jenis** tetap berfungsi penuh tanpa scope playback.
 - Kredensial disimpan plain-text di `%APPDATA%/com.tidaldownload.app/auth.json`. Untuk produksi, pindahkan ke OS keychain (mis. crate `keyring`).
 - Kualitas Hi-Res kadang berbentuk stream DASH terenkripsi dan akan ditolak otomatis dengan pesan; coba kualitas `LOSSLESS`.
-- **Login memakai `client_id` publik klien TIDAL** (`DEVICE_CLIENT_ID`). Ini bukan aplikasi yang kamu daftarkan, jadi bisa saja dicabut/dibatasi TIDAL kapan pun. Token tetap milik akunmu sendiri; refresh memakai kredensial yang sama seperti saat login.
+- **Login memakai `client_id` publik klien TV TIDAL** (`DEVICE_CLIENT_ID` = `4N3n6Q1x95LL5K7p`, nilai default `tv_atmos_token` di modul OrpheusDL-TIDAL). Ini bukan aplikasi yang kamu daftarkan, jadi bisa saja dicabut/dibatasi TIDAL kapan pun. Token tetap milik akunmu sendiri; refresh memakai kredensial yang sama seperti saat login.
 - Sudah ada fallback otomatis: kalau server menolak permintaan token yang menyertakan `client_secret`, aplikasi mengulang tanpa `client_secret`.
 - **Endpoint v2 yang terbukti jalan** (diverifikasi langsung ke `openapi.tidal.com`): pencarian butuh dua langkah (`/searchResults?filter%5Bquery%5D=…` menghasilkan id, lalu `/searchResults/{id}?include=…`), isi album & playlist diambil dari `relationships/items` (bukan `relationships/tracks` — endpoint itu membalas error), dan halaman berikutnya diikuti dari `links.next`. Pola `items` ini sama dengan proyek tidal-dl (yaronzz) yang memakai `albums/{id}/items` dan `playlists/{id}/items` di API v1.
-- Scope device login harus `r_usr+w_usr+w_sub`; menambahkan `playback` ditolak (`invalid_scope`) sehingga URL audio tidak bisa diambil lewat alur ini.
+- Scope device login adalah `r_usr w_usr` (persis seperti `TidalTvSession.auth()` di OrpheusDL); menambahkan `playback` ditolak (`invalid_scope`) — jadi scope **bukan** penentu izin stream, melainkan client id pada header `X-Tidal-Token`.
+- Hasil pencarian menampilkan **badge jenis: Lagu / Album / Artis**. Dokumen `searchResults` memang punya relationship `albums`, `artists`, `tracks`, `videos` (selaras dengan spec resmi TIDAL — klien `tidalv2` memakai `include=albums|artists|tracks`). Hasil Album/Artis punya tombol **Buka** untuk menampilkan lagu-lagunya; hanya **Lagu** yang bisa langsung diunduh.

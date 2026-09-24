@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::auth::{ensure_access_token, AuthState};
+use crate::auth::{ensure_access_token, session_client_id, AuthState, TIDAL_ANDROID_UA};
 
 const API_BASE: &str = "https://openapi.tidal.com/v2";
 const LEGACY_API: &str = "https://api.tidal.com/v1";
@@ -16,10 +16,39 @@ pub struct TrackInfo {
     pub album_id: Option<String>,
     pub cover_url: Option<String>,
     pub duration: Option<f64>,
+    /// Jenis resource: "song" | "album" | "artist" — dipakai UI untuk menandai
+    /// tiap hasil pencarian. Payload lama tanpa field ini dianggap "song".
+    #[serde(default = "default_kind")]
+    pub kind: String,
 }
 
-fn cover_from_album(
+fn default_kind() -> String {
+    "song".to_string()
+}
+
+/// Gabungkan `attributes.name` dari relationship multi (mis. `artists`) lewat `included`.
+fn names_of(res: &Value, rel: &str, by_id: &std::collections::HashMap<&str, &Value>) -> String {
+    res["relationships"][rel]["data"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| {
+                    by_id
+                        .get(a["id"].as_str()?)
+                        .map(|r| r["attributes"]["name"].as_str().unwrap_or("").to_string())
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default()
+}
+
+/// Ambil URL cover lewat relationship `rel`: `coverArt` (album/track) atau
+/// `profileArt` (artis). Relationship bisa berupa array (coverArt) atau objek
+/// tunggal (profileArt), jadi keduanya ditangani.
+fn cover_from(
     res: &Value,
+    rel: &str,
     by_id: &std::collections::HashMap<&str, &Value>,
 ) -> Option<String> {
     let attrs = &res["attributes"];
@@ -37,9 +66,10 @@ fn cover_from_album(
     if let Some(url) = attrs["coverArt"]["original"]["url"].as_str() {
         return Some(url.to_string());
     }
-    // Bentuk OpenAPI v2: album.relationships.coverArt -> resource `artworks`
-    // di `included`, URL gambar di attributes.files[].href (pilih yang terlebar).
-    let art_id = res["relationships"]["coverArt"]["data"][0]["id"].as_str()?;
+    // Bentuk OpenAPI v2: relationships.<rel>.data -> resource `artworks` di
+    // `included`, URL gambar di attributes.files[].href (pilih yang terlebar).
+    let data = &res["relationships"][rel]["data"];
+    let art_id = data[0]["id"].as_str().or_else(|| data["id"].as_str())?;
     let art = by_id.get(art_id)?;
     let best = art["attributes"]["files"]
         .as_array()?
@@ -50,6 +80,10 @@ fn cover_from_album(
 
 /// Include untuk relationship items (album/playlist): track + artis + album + cover.
 const INCLUDE_ITEMS: &str = "items,items.artists,items.albums,items.albums.coverArt";
+
+/// Include untuk dokumen searchResults: lagu, album, dan artis sekaligus supaya
+/// tiap hasil bisa ditandai jenisnya (sesuai relationship searchResults di spec).
+const SEARCH_INCLUDE: &str = "tracks,tracks.artists,tracks.albums,tracks.albums.coverArt,albums,albums.artists,albums.coverArt,artists,artists.profileArt";
 
 /// GET JSON dengan Bearer token; kegagalan HTTP diberi konteks `label`.
 async fn get_json(state: &AuthState, token: &str, url: &str, label: &str) -> Result<Value, String> {
@@ -160,19 +194,7 @@ fn parse_duration(v: &Value) -> Option<f64> {
 
 fn build_track(track: &Value, by_id: &std::collections::HashMap<&str, &Value>) -> TrackInfo {
     let attrs = &track["attributes"];
-    let artists = track["relationships"]["artists"]["data"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|a| {
-                    by_id
-                        .get(a["id"].as_str()?)
-                        .map(|r| r["attributes"]["name"].as_str().unwrap_or("").to_string())
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default();
+    let artists = names_of(track, "artists", by_id);
     let album_id = track["relationships"]["albums"]["data"][0]["id"]
         .as_str()
         .map(|s| s.to_string());
@@ -182,7 +204,7 @@ fn build_track(track: &Value, by_id: &std::collections::HashMap<&str, &Value>) -
         .map(|a| {
             (
                 a["attributes"]["title"].as_str().unwrap_or("").to_string(),
-                cover_from_album(a, by_id),
+                cover_from(a, "coverArt", by_id),
             )
         })
         .unwrap_or_default();
@@ -194,6 +216,39 @@ fn build_track(track: &Value, by_id: &std::collections::HashMap<&str, &Value>) -
         album_id,
         cover_url,
         duration: parse_duration(&attrs["duration"]),
+        kind: "song".to_string(),
+    }
+}
+
+/// Hasil pencarian berupa album: title = judul album, artists = artis album.
+fn build_album(album: &Value, by_id: &std::collections::HashMap<&str, &Value>) -> TrackInfo {
+    let id = album["id"].as_str().unwrap_or_default().to_string();
+    TrackInfo {
+        title: album["attributes"]["title"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        artists: names_of(album, "artists", by_id),
+        album: String::new(),
+        album_id: Some(id.clone()),
+        cover_url: cover_from(album, "coverArt", by_id),
+        duration: parse_duration(&album["attributes"]["duration"]),
+        kind: "album".to_string(),
+        id,
+    }
+}
+
+/// Hasil pencarian berupa artis: title = nama artis, cover dari `profileArt`.
+fn build_artist(artist: &Value, by_id: &std::collections::HashMap<&str, &Value>) -> TrackInfo {
+    TrackInfo {
+        id: artist["id"].as_str().unwrap_or_default().to_string(),
+        title: artist["attributes"]["name"].as_str().unwrap_or("").to_string(),
+        artists: String::new(),
+        album: String::new(),
+        album_id: None,
+        cover_url: cover_from(artist, "profileArt", by_id),
+        duration: None,
+        kind: "artist".to_string(),
     }
 }
 
@@ -223,15 +278,28 @@ fn parse_tracks(json: &Value) -> Vec<TrackInfo> {
     }
 
     let mut refs: Vec<&Value> = Vec::new();
+    let mut album_refs: Vec<&Value> = Vec::new();
+    let mut artist_refs: Vec<&Value> = Vec::new();
     for it in &data_items {
         if it["type"].as_str() == Some("tracks") {
             refs.push(it);
         } else if let Some(sub) = it["relationships"]["tracks"]["data"].as_array() {
             refs.extend(sub.iter());
         }
+        // Dokumen searchResults juga memuat albums/artists → ikut ditampilkan
+        // supaya user bisa membedakan lagu / album / artis.
+        if it["type"].as_str() == Some("searchResults") {
+            if let Some(sub) = it["relationships"]["albums"]["data"].as_array() {
+                album_refs.extend(sub.iter());
+            }
+            if let Some(sub) = it["relationships"]["artists"]["data"].as_array() {
+                artist_refs.extend(sub.iter());
+            }
+        }
     }
 
-    refs.iter()
+    let mut out: Vec<TrackInfo> = refs
+        .iter()
         .filter_map(|r| {
             let id = r["id"].as_str()?;
             let full = by_id.get(id).copied().unwrap_or(r);
@@ -241,7 +309,22 @@ fn parse_tracks(json: &Value) -> Vec<TrackInfo> {
             }
             Some(build_track(full, &by_id))
         })
-        .collect()
+        .collect();
+    for r in album_refs {
+        if let Some(a) = r["id"].as_str().and_then(|id| by_id.get(id)) {
+            if !a["attributes"]["title"].is_null() {
+                out.push(build_album(a, &by_id));
+            }
+        }
+    }
+    for r in artist_refs {
+        if let Some(a) = r["id"].as_str().and_then(|id| by_id.get(id)) {
+            if !a["attributes"]["name"].is_null() {
+                out.push(build_artist(a, &by_id));
+            }
+        }
+    }
+    out
 }
 
 enum TidalTarget {
@@ -322,12 +405,22 @@ pub async fn search(state: &AuthState, query: &str) -> Result<Vec<TrackInfo>, St
         .or_else(|| found["data"]["id"].as_str())
         .ok_or("hasil pencarian kosong")?
         .to_string();
-    // Langkah 2: tracks lengkap (artis + album + cover) dari id hasil pencarian.
+    // Langkah 2: lagu + album + artis (supaya jenis tiap hasil bisa dibedakan).
     let url = format!(
-        "{API_BASE}/searchResults/{search_id}?countryCode={COUNTRY}&include=tracks,tracks.artists,tracks.albums,tracks.albums.coverArt"
+        "{API_BASE}/searchResults/{search_id}?countryCode={COUNTRY}&include={SEARCH_INCLUDE}"
     );
-    let json = get_json(state, &token, &url, "search").await?;
-    Ok(parse_tracks(&json))
+    match get_json(state, &token, &url, "search").await {
+        Ok(json) => Ok(parse_tracks(&json)),
+        // Jaring pengaman: kalau salah satu include tidak didukung versi API saat
+        // ini, ulangi dengan lagu saja supaya pencarian tetap berfungsi.
+        Err(_) => {
+            let fallback = format!(
+                "{API_BASE}/searchResults/{search_id}?countryCode={COUNTRY}&include=tracks,tracks.artists,tracks.albums,tracks.albums.coverArt"
+            );
+            let json = get_json(state, &token, &fallback, "search").await?;
+            Ok(parse_tracks(&json))
+        }
+    }
 }
 
 pub async fn get_album_tracks(
@@ -412,11 +505,45 @@ pub async fn get_artist_name(state: &AuthState, artist_id: &str) -> Result<Strin
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PlaybackInfo {
     #[serde(default)]
     manifest_mime_type: String,
     #[serde(default)]
     manifest: String,
+}
+
+/// Kode negara akun untuk request API (diambil dari token); fallback ke default.
+async fn api_country(state: &AuthState) -> String {
+    let guard = state.session.lock().await;
+    guard
+        .as_ref()
+        .and_then(|s| s.country_code.clone())
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| COUNTRY.to_string())
+}
+
+/// URL endpoint playback v1. `v4` + `prefetch=false` sama seperti OrpheusDL
+/// (`get_stream_url`: `tracks/{id}/playbackinfopostpaywall/v4`); tanpa suffix
+/// `v4` TIDAL membalas 4005 / "Asset is not ready for playback".
+fn playbackinfo_url(track_id: &str, quality: &str, country: &str) -> String {
+    format!(
+        "{LEGACY_API}/tracks/{track_id}/playbackinfopostpaywall/v4\
+         ?playbackmode=STREAM&assetpresentation=FULL&audioquality={quality}\
+         &prefetch=false&countryCode={country}"
+    )
+}
+
+/// GET ke `api.tidal.com/v1` dengan header klien TV. Bukan `bearer_auth` biasa:
+/// TIDAL memutuskan izin playback dari header `X-Tidal-Token` (client id) plus
+/// User-Agent klien TV — inilah `auth_headers()` di OrpheusDL-TIDAL.
+fn v1_get(state: &AuthState, token: &str, client_id: &str, url: &str) -> reqwest::RequestBuilder {
+    state
+        .client
+        .get(url)
+        .bearer_auth(token)
+        .header("X-Tidal-Token", client_id)
+        .header("User-Agent", TIDAL_ANDROID_UA)
 }
 
 pub async fn resolve_stream(
@@ -425,22 +552,29 @@ pub async fn resolve_stream(
     quality: &str,
 ) -> Result<(String, String), String> {
     let token = ensure_access_token(state).await?;
-    let url = format!(
-        "{LEGACY_API}/tracks/{track_id}/playbackinfopostpaywall?audioquality={quality}&playbackmode=STREAM&assetpresentation=FULL"
-    );
-    let resp = state
-        .client
-        .post(&url)
-        .bearer_auth(&token)
+    let country = api_country(state).await;
+    let client_id = session_client_id(state).await;
+    let url = playbackinfo_url(track_id, quality, &country);
+    let resp = v1_get(state, &token, &client_id, &url)
         .send()
         .await
         .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!(
-            "playbackinfo gagal: {status} - {body} (pastikan akun premium & scope playback aktif)"
-        ));
+        // 4005 / 11004 / PREREQUISITE_MISSING = sesi tidak diizinkan stream:
+        // akun tanpa langganan HiFi, sesi klien TV tidak valid (login ulang),
+        // atau track region-locked. Bukan soal scope `playback`.
+        if body.contains("4005") || body.contains("11004") || body.contains("PREREQUISITE_MISSING") {
+            return Err(
+                "Unduhan tidak tersedia: TIDAL menolak permintaan stream. \n\
+                 Kemungkinan penyebab: (1) akun belum punya langganan HiFi/Plus, \n\
+                 (2) sesi login lama (login ulang supaya memakai klien TV terbaru), \n\
+                 (3) track is region-locked. Pencarian/album/playlist/cover tetap berfungsi."
+                    .into(),
+            );
+        }
+        return Err(format!("playbackinfo gagal: {status} - {body}"));
     }
     let info: PlaybackInfo = resp.json().await.map_err(|e| e.to_string())?;
     if info.manifest_mime_type.contains("bts") || info.manifest_mime_type.contains("json") {
@@ -456,6 +590,8 @@ pub async fn resolve_stream(
             .to_string();
         let ext = match manifest["codecs"].as_str().unwrap_or("") {
             c if c.contains("flac") => "flac".to_string(),
+            // MQA juga dikirim dalam container FLAC (hanya metadatanya berbeda).
+            c if c.contains("mqa") => "flac".to_string(),
             c if c.contains("alac") || c.contains("mha1") => "m4a".to_string(),
             c if c.contains("mp4a") || c.contains("aac") => "m4a".to_string(),
             c if c.contains("mp3") => "mp3".to_string(),
@@ -527,6 +663,7 @@ mod tests {
             Some("https://resources.tidal.com/big.jpg")
         );
         assert_eq!(t.duration, Some(213.5));
+        assert_eq!(t.kind, "song");
     }
 
     #[test]
@@ -620,6 +757,112 @@ mod tests {
         assert_eq!(tracks[0].id, "t-9");
         assert_eq!(tracks[0].artists, "Satu Artis");
         assert_eq!(tracks[0].album, "Album Solo");
+    }
+
+    #[test]
+    fn parse_tracks_labels_song_album_and_artist() {
+        // Dokumen searchResults memuat tracks + albums + artists sekaligus.
+        let payload = json!({
+            "data": [{
+                "id": "sr-1",
+                "type": "searchResults",
+                "relationships": {
+                    "tracks": { "data": [ { "id": "t-1", "type": "tracks" } ] },
+                    "albums": { "data": [ { "id": "al-1", "type": "albums" } ] },
+                    "artists": { "data": [ { "id": "a-1", "type": "artists" } ] }
+                }
+            }],
+            "included": [
+                {
+                    "id": "t-1",
+                    "type": "tracks",
+                    "attributes": { "title": "Lagu Satu" },
+                    "relationships": {
+                        "artists": { "data": [ { "id": "a-1", "type": "artists" } ] },
+                        "albums": { "data": [ { "id": "al-1", "type": "albums" } ] }
+                    }
+                },
+                {
+                    "id": "al-1",
+                    "type": "albums",
+                    "attributes": { "title": "Album Satu" },
+                    "relationships": {
+                        "artists": { "data": [ { "id": "a-1", "type": "artists" } ] },
+                        "coverArt": { "data": [ { "id": "art-1", "type": "artworks" } ] }
+                    }
+                },
+                {
+                    "id": "a-1",
+                    "type": "artists",
+                    "attributes": { "name": "Artis Satu" },
+                    // profileArt = relationship tunggal (objek, bukan array)
+                    "relationships": { "profileArt": { "data": { "id": "art-2", "type": "artworks" } } }
+                },
+                {
+                    "id": "art-1",
+                    "type": "artworks",
+                    "attributes": { "files": [
+                        { "href": "https://c/album-320.jpg", "meta": { "width": 320 } },
+                        { "href": "https://c/album-1280.jpg", "meta": { "width": 1280 } }
+                    ] }
+                },
+                {
+                    "id": "art-2",
+                    "type": "artworks",
+                    "attributes": { "files": [
+                        { "href": "https://c/artist-750.jpg", "meta": { "width": 750 } }
+                    ] }
+                }
+            ]
+        });
+
+        let out = parse_tracks(&payload);
+        assert_eq!(out.len(), 3);
+
+        let song = out.iter().find(|t| t.kind == "song").expect("ada lagu");
+        assert_eq!(song.title, "Lagu Satu");
+        assert_eq!(song.artists, "Artis Satu");
+        assert_eq!(song.album, "Album Satu");
+        assert_eq!(song.album_id.as_deref(), Some("al-1"));
+
+        let album = out.iter().find(|t| t.kind == "album").expect("ada album");
+        assert_eq!(album.id, "al-1");
+        assert_eq!(album.title, "Album Satu");
+        assert_eq!(album.artists, "Artis Satu");
+        assert_eq!(album.cover_url.as_deref(), Some("https://c/album-1280.jpg"));
+
+        let artist = out
+            .iter()
+            .find(|t| t.kind == "artist")
+            .expect("ada artis");
+        assert_eq!(artist.id, "a-1");
+        assert_eq!(artist.title, "Artis Satu");
+        assert_eq!(artist.cover_url.as_deref(), Some("https://c/artist-750.jpg"));
+    }
+
+    #[test]
+    fn playbackinfo_url_uses_v4_and_tv_params() {
+        // Bentuk URL disamakan dengan OrpheusDL (`get_stream_url`): suffix /v4,
+        // prefetch=false, dan countryCode wajib.
+        let url = playbackinfo_url("12345", "LOSSLESS", "ID");
+        assert_eq!(
+            url,
+            "https://api.tidal.com/v1/tracks/12345/playbackinfopostpaywall/v4?\
+             playbackmode=STREAM&assetpresentation=FULL&audioquality=LOSSLESS&\
+             prefetch=false&countryCode=ID"
+        );
+    }
+
+    #[test]
+    fn parses_playback_info_camel_case() {
+        // Respons asli memakai camelCase: `manifestMimeType`. Tanpa
+        // rename_all, field-nya kosong → muncul error "manifest tidak dikenal".
+        let info: PlaybackInfo = serde_json::from_str(
+            r#"{"manifestMimeType":"application/vnd.tidal.bts","manifest":"eyJ1cmxzIjpbXX0="}"#,
+        )
+        .unwrap();
+        assert_eq!(info.manifest_mime_type, "application/vnd.tidal.bts");
+        assert_eq!(info.manifest, "eyJ1cmxzIjpbXX0=");
     }
 
     #[test]
