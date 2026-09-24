@@ -4,6 +4,22 @@ Desktop app untuk mencari & mengunduh track TIDAL dengan metadata lengkap (title
 
 > ⚠️ **Disclaimer**: Gunakan hanya untuk konten yang berhak kamu unduh sesuai ketentuan TIDAL dan hukum yang berlaku. Endpoint streaming memerlukan akun premium dan persetujuan developer; penggunaan di luar ketentuan layanan TIDAL adalah tanggung jawab pengguna.
 
+## ⬇️ Download (langsung pakai, tanpa build sendiri)
+
+Installer **Windows 10/11 x64** yang sudah jadi ada di folder [`packages/`](packages/):
+
+| File (di `packages/windows-x64/`) | Keterangan |
+| --- | --- |
+| `Tidal-Downloader-<versi>-x64-setup.exe` | **Disarankan** — installer per-user (tanpa hak admin), WebView2 otomatis |
+| `Tidal-Downloader-<versi>-x64.msi` | Installer MSI untuk deployment / GPO |
+| `Tidal-Downloader-<versi>-portable.exe` | Portable, dijalankan tanpa install |
+
+Unduh filenya dari GitHub (buka folder → klik file → **Download**), atau langsung:
+`https://github.com/galuhp/tidal-donlot/raw/main/packages/windows-x64/<nama-file>`.
+
+Panduan install, catatan SmartScreen, dan hash **SHA-256** ada di
+[`packages/README.md`](packages/README.md).
+
 ## Fitur
 
 - 🔐 **Login pakai kode (OAuth 2.0 Device Authorization Grant)** — kode di `link.tidal.com`, **tanpa daftar aplikasi** & **tanpa `CLIENT_ID`/`CLIENT_SECRET`**
@@ -57,6 +73,19 @@ npm run tauri build
 ```
 
 Hasil installer ada di `src-tauri/target/release/bundle/`.
+
+### Siapkan folder `packages/` (siap dibagikan)
+
+```bash
+npm run package:win
+```
+
+Perintah ini menjalankan `npm run tauri build`, lalu menyalin hasilnya ke
+`packages/windows-x64/` dengan nama file yang rapi, serta memperbarui
+`packages/SHA256SUMS.txt` dan `packages/README.md` secara otomatis
+(sumber: [`scripts/build-package.ps1`](scripts/build-package.ps1)).
+Kirim folder `packages/` itu ke pengguna lain agar mereka bisa langsung mengunduh EXE-nya
+tanpa perlu memasang Node.js/Rust.
 
 ## Arsitektur
 

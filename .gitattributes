@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Artefak rilis di packages/ (sudah berupa binary, jangan dinormalisasi/di-diff)
+*.exe binary
+*.msi binary
+*.dll binary
+*.ico binary
+*.png binary
