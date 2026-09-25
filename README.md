@@ -28,7 +28,24 @@ Panduan install, catatan SmartScreen, dan hash **SHA-256** ada di
 - 🔍 **Pencarian track** via TIDAL API v2 (JSON:API)
 - ⬇️ **Download queue** dengan progress bar real-time (event Rust → UI)
 - 🎚️ **Pilihan kualitas**: Hi-Res Lossless / Lossless (FLAC) / High (AAC 320) / Low (AAC 96)
+- 🎵 **Konversi ke MP3** setelah unduh: **bitrate sama (CBR)** atau **VBR V0** — encoder LAME 3.100 ikut di dalam aplikasi, **tanpa perlu ffmpeg**
 - 🏷️ **Metadata embedded** (lofty): judul, artis, album, cover art
+
+### Format hasil unduhan (dropdown **Format**)
+
+| Pilihan | Hasil | Catatan |
+| --- | --- | --- |
+| `Asli (FLAC / AAC)` | apa adanya | Lossless/Hi-Res → **FLAC**; High → **AAC 320** (`.m4a`); Low → **AAC 96** (`.m4a`) |
+| `MP3 — bitrate sama` | **MP3 CBR** | bitrate mengikuti file sumber: High (AAC 320) → MP3 320; FLAC ~1411 kbps → MP3 320 (batas tertinggi MP3); AAC 96 → MP3 96 |
+| `MP3 — VBR V0` | **MP3 VBR** | LAME `-V0` (kualitas tertinggi, ~245 kbps rata-rata) |
+
+Catatan konversi:
+
+- Unduhan selalu diambil utuh dulu dari TIDAL, **baru** dikonversi — jadi kualitas sumber tidak dikorbankan. Setelah konversi berhasil, file sumber (mis. `.flac`) dihapus dan diganti file `.mp3`.
+- Kalau konversi gagal (mis. format tidak didukung), file hasil unduhan **tetap disimpan** dan alasan kegagalannya muncul di kartu lagu.
+- File MP3 diberi tag **LAME/Xing** + ID3v2 (judul, artis, album, cover) supaya durasi & seek di player akurat.
+- Kualitas `High`/`Low` dari TIDAL sudah berupa **AAC (lossy)**. Memilih `MP3` untuk kualitas ini berarti *transcode* lossy → lossy; pilih `Asli (FLAC / AAC)` kalau ingin AAC-nya disimpan apa adanya.
+- Sample rate Hi-Res (88,2/96/192 kHz) otomatis diturunkan LAME ke rate terdekat yang didukung (44,1/48 kHz) saat encode MP3.
 
 ## Prasyarat
 
@@ -98,6 +115,7 @@ src-tauri/
     auth.rs             # Device Authorization Grant (login pakai kode) + refresh + persist
     tidal.rs            # Client API v2 (JSON:API) + paginasi + resolve stream URL
     downloader.rs       # Download audio + progress event + embed tags
+    transcode.rs        # Konversi FLAC/ALAC/AAC → MP3 (symphonia + LAME)
   capabilities/         # Permission Tauri (dialog, event, opener)
 ```
 
@@ -109,6 +127,8 @@ src-tauri/
 - Fitur **search / album / playlist / cover / badge jenis** tetap berfungsi penuh tanpa scope playback.
 - Kredensial disimpan plain-text di `%APPDATA%/com.tidaldownload.app/auth.json`. Untuk produksi, pindahkan ke OS keychain (mis. crate `keyring`).
 - Kualitas Hi-Res kadang berbentuk stream DASH terenkripsi dan akan ditolak otomatis dengan pesan; coba kualitas `LOSSLESS`.
+- Konversi MP3 memakai **decoder symphonia** (100% pure Rust) + **encoder LAME 3.100** dari crate `mp3lame-encoder` (lisensi encoder: LGPL-3.0). Source LAME & codec symphonia dikompilasi saat `cargo build`, jadi **MSVC Build Tools wajib ada** (memang sudah prasyarat Tauri) dan **tidak perlu memasang `ffmpeg`**.
+- Konversi dijalankan di *blocking thread* setelah unduhan selesai; UI menampilkan status "Mengonversi ke MP3…" selama proses berlangsung (durasi ± sepersekian durasi lagu).
 - **Login memakai `client_id` publik klien TV TIDAL** (`DEVICE_CLIENT_ID` = `4N3n6Q1x95LL5K7p`, nilai default `tv_atmos_token` di modul OrpheusDL-TIDAL). Ini bukan aplikasi yang kamu daftarkan, jadi bisa saja dicabut/dibatasi TIDAL kapan pun. Token tetap milik akunmu sendiri; refresh memakai kredensial yang sama seperti saat login.
 - Sudah ada fallback otomatis: kalau server menolak permintaan token yang menyertakan `client_secret`, aplikasi mengulang tanpa `client_secret`.
 - **Endpoint v2 yang terbukti jalan** (diverifikasi langsung ke `openapi.tidal.com`): pencarian butuh dua langkah (`/searchResults?filter%5Bquery%5D=…` menghasilkan id, lalu `/searchResults/{id}?include=…`), isi album & playlist diambil dari `relationships/items` (bukan `relationships/tracks` — endpoint itu membalas error), dan halaman berikutnya diikuti dari `links.next`. Pola `items` ini sama dengan proyek tidal-dl (yaronzz) yang memakai `albums/{id}/items` dan `playlists/{id}/items` di API v1.

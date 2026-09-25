@@ -30,6 +30,11 @@ lofty = "0.22"
 futures-util = "0.3"
 tokio = { version = "1", features = ["sync"] }
 urlencoding = "2"
+# Konversi ke MP3: `symphonia` = decoder (FLAC/ALAC/AAC), LAME = encoder.
+# `default-features = false` supaya hanya codec yang dipakai yang ikut dikompilasi.
+# Feature `wav`+`pcm` dipakai unit test (file WAV dibuat on-the-fly).
+symphonia = { version = "0.5.4", default-features = false, features = ["flac", "aac", "alac", "isomp4", "mp3", "wav", "pcm"] }
+mp3lame-encoder = "0.2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -9,12 +9,13 @@ use tauri::{AppHandle, Emitter};
 
 use crate::auth::AuthState;
 use crate::tidal::{resolve_stream, TrackInfo};
+use crate::transcode::{self, Mp3Mode};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadProgress {
     pub track_id: String,
     pub title: String,
-    pub status: String, // started | progress | done | error
+    pub status: String, // started | progress | converting | done | error
     pub downloaded: u64,
     pub total: u64,
     pub message: Option<String>,
@@ -96,12 +97,22 @@ fn embed_tags(
 }
 
 /// Download one track, emit progress events, embed metadata, save to `dir`.
+///
+/// `format` (dropdown "Format" di UI) menentukan hasil akhirnya:
+/// - `original` / nilai lain: file disimpan apa adanya — Lossless/Hi-Res → FLAC,
+///   High/Low → AAC di dalam `.m4a`.
+/// - `mp3_same`: dikonversi ke MP3 CBR dengan bitrate file sumber.
+/// - `mp3_vbr0`: dikonversi ke MP3 VBR V0 (LAME `-V0`).
+///
+/// Kalau konversi gagal, file hasil unduhan tetap disimpan (tidak dihapus)
+/// supaya unduhan tidak sia-sia.
 #[allow(clippy::too_many_arguments)]
 pub async fn download_track(
     app: AppHandle,
     state: &AuthState,
     track: &TrackInfo,
     quality: &str,
+    format: &str,
     dir: PathBuf,
 ) -> Result<PathBuf, String> {
     let emit = |p: DownloadProgress| {
@@ -144,8 +155,8 @@ pub async fn download_track(
         start("progress", None, None, downloaded, total);
     }
 
-    let file_name = sanitize(&format!("{} - {}", track.artists, track.title)) + "." + &ext;
-    let path = dir.join(&file_name);
+    let base = sanitize(&format!("{} - {}", track.artists, track.title));
+    let path = dir.join(format!("{base}.{ext}"));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     std::fs::write(&path, &audio).map_err(|e| e.to_string())?;
 
@@ -153,18 +164,89 @@ pub async fn download_track(
         Some(url) => fetch_cover(state, url).await,
         None => None,
     };
-    if let Err(e) = embed_tags(&path, &track.title, &track.artists, &track.album, cover.as_deref()) {
-        // not fatal: file is already saved
-        start("done", Some(format!("tag gagal: {e}")), Some(path.display().to_string()), downloaded, downloaded);
-        return Ok(path);
-    }
 
+    // Tanpa konversi: file disimpan apa adanya (FLAC, atau AAC `.m4a` untuk
+    // kualitas High/Low).
+    let Some(mode) = transcode::parse_mode(format) else {
+        return finish(
+            &start,
+            path,
+            track,
+            cover.as_deref(),
+            downloaded,
+            None,
+        );
+    };
+
+    // Konversi ke MP3 — CPU-heavy, jadi dijalankan di blocking thread supaya
+    // runtime async (dan event progress) tidak ikut tertahan.
+    let mode_label = match mode {
+        Mp3Mode::SameBitrate => "bitrate sama",
+        Mp3Mode::Vbr0 => "VBR V0",
+    };
     start(
-        "done",
+        "converting",
+        Some(format!("Mengonversi ke MP3 ({mode_label})…")),
         None,
-        Some(path.display().to_string()),
         downloaded,
         downloaded,
     );
+
+    let mp3_path = dir.join(format!("{base}.mp3"));
+    let source_kbps = transcode::probe_bitrate_kbps(&path);
+    let (input, output) = (path.clone(), mp3_path.clone());
+    let converted = tauri::async_runtime::spawn_blocking(move || {
+        transcode::convert_to_mp3(&input, &output, mode, source_kbps)
+    })
+    .await;
+
+    match converted {
+        Ok(Ok(())) => {
+            // Konversi sukses → MP3 jadi hasil akhir, file sumber dihapus
+            // (kalau jalur file-nya memang berbeda).
+            if path != mp3_path {
+                let _ = std::fs::remove_file(&path);
+            }
+            finish(&start, mp3_path, track, cover.as_deref(), downloaded, None)
+        }
+        Ok(Err(e)) => finish(
+            &start,
+            path,
+            track,
+            cover.as_deref(),
+            downloaded,
+            Some(format!("konversi MP3 gagal — file asli disimpan: {e}")),
+        ),
+        Err(e) => finish(
+            &start,
+            path,
+            track,
+            cover.as_deref(),
+            downloaded,
+            Some(format!("konversi MP3 gagal — file asli disimpan: {e}")),
+        ),
+    }
+}
+
+/// Tag file hasil & kirim event `done` (dengan `warning` opsional).
+#[allow(clippy::too_many_arguments)]
+fn finish(
+    start: &impl Fn(&str, Option<String>, Option<String>, u64, u64),
+    path: PathBuf,
+    track: &TrackInfo,
+    cover: Option<&[u8]>,
+    downloaded: u64,
+    warning: Option<String>,
+) -> Result<PathBuf, String> {
+    let shown = path.display().to_string();
+    // Tag gagal bukan error fatal: file sudah tersimpan.
+    let message = match embed_tags(&path, &track.title, &track.artists, &track.album, cover) {
+        Ok(()) => warning,
+        Err(e) => Some(match warning {
+            Some(w) => format!("{w}; tag gagal: {e}"),
+            None => format!("tag gagal: {e}"),
+        }),
+    };
+    start("done", message, Some(shown), downloaded, downloaded);
     Ok(path)
 }

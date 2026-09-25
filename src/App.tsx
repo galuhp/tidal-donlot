@@ -34,7 +34,7 @@ type Track = {
 type Progress = {
   track_id: string;
   title: string;
-  status: "started" | "progress" | "done" | "error";
+  status: "started" | "progress" | "converting" | "done" | "error";
   downloaded: number;
   total: number;
   message: string | null;
@@ -76,6 +76,19 @@ const QUALITIES = [
   { value: "LOSSLESS", label: "Lossless (FLAC)" },
   { value: "HIGH", label: "High (AAC 320)" },
   { value: "LOW", label: "Low (AAC 96)" },
+];
+
+/**
+ * Format hasil unduhan (setelah file diambil utuh dari TIDAL):
+ * - `original` : apa adanya — Lossless/Hi-Res → FLAC, High/Low → **AAC** (`.m4a`).
+ * - `mp3_same` : dikonversi ke MP3 CBR dengan bitrate sumber (High 320 → MP3 320,
+ *                FLAC ~1411 kbps → MP3 320 karena batas tertinggi MP3).
+ * - `mp3_vbr0` : dikonversi ke MP3 VBR V0 (LAME `-V0`, ~245 kbps).
+ */
+const FORMATS = [
+  { value: "original", label: "Asli (FLAC / AAC)", hint: "Lossless → FLAC, High → AAC (.m4a)" },
+  { value: "mp3_same", label: "MP3 — bitrate sama", hint: "MP3 CBR mengikuti bitrate sumber" },
+  { value: "mp3_vbr0", label: "MP3 — VBR V0", hint: "MP3 VBR kualitas tertinggi (~245 kbps)" },
 ];
 
 function fmtDuration(s?: number | null) {
@@ -128,6 +141,7 @@ export default function App() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [searching, setSearching] = useState(false);
   const [quality, setQuality] = useState("LOSSLESS");
+  const [format, setFormat] = useState("original");
   const [outDir, setOutDir] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Record<string, Progress>>({});
@@ -197,7 +211,7 @@ export default function App() {
         const track = tracks.find((t) => t.id === nextId);
         if (!track || !outDir) break;
         try {
-          await invoke("download_track", { track, quality, dir: outDir });
+          await invoke("download_track", { track, quality, format, dir: outDir });
         } catch (e) {
           setError(String(e));
           setQueue((q) => q.filter((id) => id !== nextId));
@@ -207,7 +221,7 @@ export default function App() {
     } finally {
       busyRef.current = false;
     }
-  }, [tracks, outDir, quality]);
+  }, [tracks, outDir, quality, format]);
 
   /** Login pakai kode (Device Authorization Grant) — tanpa daftar aplikasi. */
   async function loginDevice() {
@@ -438,12 +452,28 @@ export default function App() {
           className="toolbar-select"
           value={quality}
           onChange={(e) => setQuality(e.target.value)}
-          title="Kualitas audio saat diunduh"
+          title="Kualitas audio dari TIDAL: Hi-Res/Lossless = FLAC, High = AAC 320, Low = AAC 96"
           aria-label="Kualitas audio"
         >
           {QUALITIES.map((q) => (
             <option key={q.value} value={q.value}>
               {q.label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="toolbar-select"
+          value={format}
+          onChange={(e) => setFormat(e.target.value)}
+          title={
+            FORMATS.find((f) => f.value === format)?.hint ??
+            "Format hasil unduhan"
+          }
+          aria-label="Format hasil"
+        >
+          {FORMATS.map((f) => (
+            <option key={f.value} value={f.value}>
+              {f.label}
             </option>
           ))}
         </select>
@@ -577,6 +607,12 @@ export default function App() {
                           {fmtBytes(p.downloaded)} / {fmtBytes(p.total)}
                         </span>
                       </>
+                    )}
+                    {p?.status === "converting" && (
+                      <span className="card-note">
+                        <Loader2 className="spin" size={12} aria-hidden="true" />
+                        {p.message ?? "Mengonversi ke MP3…"}
+                      </span>
                     )}
                     {done && (
                       <span className="card-note ok" title={p?.path ?? undefined}>

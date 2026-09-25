@@ -1,6 +1,7 @@
 mod auth;
 mod downloader;
 mod tidal;
+mod transcode;
 
 use std::path::PathBuf;
 
@@ -67,16 +68,25 @@ async fn album_tracks(
     tidal::get_album_tracks(&state, &album_id).await
 }
 
+/// Unduh satu track. `format`: `original` (apa adanya) / `mp3_same` / `mp3_vbr0`.
 #[tauri::command]
 async fn download_track(
     app: tauri::AppHandle,
     state: State<'_, AuthState>,
     track: TrackInfo,
     quality: String,
+    format: Option<String>,
     dir: String,
 ) -> Result<String, String> {
-    let path =
-        downloader::download_track(app, &state, &track, &quality, PathBuf::from(&dir)).await?;
+    let path = downloader::download_track(
+        app,
+        &state,
+        &track,
+        &quality,
+        format.as_deref().unwrap_or("original"),
+        PathBuf::from(&dir),
+    )
+    .await?;
     Ok(path.display().to_string())
 }
 
